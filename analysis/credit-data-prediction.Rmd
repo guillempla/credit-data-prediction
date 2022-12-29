@@ -1,0 +1,717 @@
+---
+title: 'Mineria de dades: PAC3 - Classificació amb arbres de decisió'
+author: "Autor: Guillem Pla Bertran"
+date: "Desembre 2022"
+output:
+  html_document:
+    highlight: default
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 2
+    includes:
+      in_header: header.html
+  pdf_document:
+    highlight: zenburn
+    toc: yes
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = TRUE, echo = TRUE)
+knitr::opts_knit$set(root.dir = "../")
+```
+
+# Primera anàlisi descriptiva i de correlacions
+
+En aquest treball fem servir les dades **German Credit**. Aquest joc de dades classifica les persones segons el risc que tenen a l'hora de demanar un crèdit.
+
+En aquest apartat, es fa una primera anàlisi de les dades. Es vol veure com són les dades i entendre-les el millor possible.
+
+
+## Descripció dels atributs
+
+A continuació es mostra una taula amb els atributs del conjunt de dades i la seua explicació:
+
+| **Atribut**          | **Descripció**                                                     |
+|----------------------|--------------------------------------------------------------------|
+| checking_balance     | Estat del compte corrent                                           |
+| months_loan_duration | Durada del préstec en mesos                                        |
+| credit_history       | Informació sobre crèdits anteriors                                 |
+| purpose              | Propòsit del prèstec                                               |
+| amount               | Import del crèdit                                                  |
+| savings_balance      | Quantitat de diners al compte d'estalvis                           |
+| employment_length    | Temps treballats en anys                                           |
+| installment_rate     | Taxa de fraccionament en percentatge de la renda disponible        |
+| personal_status      | Estat personal (divorciat, casat, solter) i sexe (masculí, femení) |
+| other_debtors        | Altres deutors o fiadors                                           |
+| residence_history    | Des de quan viu en la residència actual                            |
+| property             | Informació sobre les pròpietats i bens                             |
+| age                  | Edat                                                               |
+| installment_plan     | Altres plans de fraccionament                                      |
+| housing              | Habitatge                                                          |
+| existing_credits     | Nombre de crèdits existents en aquest banc                         |
+| default              | Indica l'impagament de crèdits                                     |
+| dependents           | Nombre de persones obligades a fer el manteniment                  |
+| telephone            | Informació de si té el telèfon registrat al banc o no              |
+| foreign_worker       | Informació de si és un treballador estranger                       |
+| job                  | Informació bàsica del tipus de feina                               |
+
+
+## Exploració de la base de dades
+
+Comencem carregant les dades en un *Data Frame*. A més, també fem servir la funció `attach(...)` per a poder accedir als objectes del *Data Frame* només escrivint el seu nom:
+```{r message=FALSE, warning=FALSE}
+df <- read.csv("data/credit.csv", header = TRUE, sep = ",")
+df_original <- df
+attach(df)
+```
+
+Donem una ullada a l'estructura de les dades:
+```{r message=FALSE, warning=FALSE}
+str(df)
+```
+
+Veiem que hi ha 1000 registres i 21 variables. Hi ha variables numèriques i categòriques.
+
+Es pot observar que l'atribut `personal_status` és una barreja entre la situació familiar (solter, casat, divorciat) i entre el sexe de la persona (masculí, femení). Decidim crear una nova variable `sex`. Sorprèn veure que en el cas que la persona sigui de sexe femení no es tinguin dades sobre el seu estat familiar, però, en canvi, si és de sexe masculí sí.
+```{r message=FALSE, warning=FALSE}
+df$sex <- gsub("(single )?(divorced )?(married )?", "", df$personal_status)
+unique(df$sex)
+```
+
+Les variables categòriques s'han carregat com a caràcters, però volem que siguin *factors*. Això vol dir que cal convertir les variables amb tipus caràcter a tipus *factor*. També cal convertir la variable objectiu `default` a *factor*.
+
+Per fer-ho fem servir la funció fem servir el seguent codi:
+```{r message=FALSE, warning=FALSE}
+# Convertim les variables categòriques a factor
+df[sapply(df, is.character)] <- lapply(
+  df[sapply(df, is.character)],
+  as.factor
+)
+# Convertim la variable default a factor
+df$default <- cut(df$default, 2, labels = c("No default", "Default"))
+```
+
+Un cop hem obtingut les variables amb el tipus que volem, ens interessa conèixer si contenen molts valors buits. Ho fem amb la següent comanda que mostra les variables ordenades per la proporció de valors buits (`NA` i caràcters buits):
+```{r message=FALSE, warning=FALSE}
+sort(colMeans(is.na(df) | df == ""), decreasing = TRUE)
+```
+
+Per sort, cap dels atributs conté registres buits.
+
+## Visualització
+
+Per a conèixer millor les dades, disposem de les eines de visualització.
+
+Primer de tot, carreguem els paquets que farem servir per a generar les gràfiques. Aquest són `ggplot2`, `ggalt`, `ggtext`, `ggpubr`, `grid`, `gridExtra` i `C50`:
+```{r message=FALSE, warning=FALSE}
+packages <- c("ggplot2", "ggalt", "ggtext", "ggpubr", "grid", "gridExtra")
+
+not_installed <- packages[!(packages %in% installed.packages())]
+if (length(not_installed) > 0) {
+  install.packages(not_installed, repos = "http:/cran.us.r-project.org")
+}
+lapply(packages, library, character.only = TRUE)
+```
+
+### Anàlisi univariant
+
+Analitzem les diferents variables del *Data Frame*, principalment volem conèixer la seua distribució.
+
+Generem histogrames per a veure com estan distribuïdes:
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=20}
+grid.newpage()
+plots <- list()
+i <- 1
+
+for (attr in colnames(df)) {
+  plot <- ggplot(df, aes_string(x = attr)) +
+    geom_histogram(stat = "count") +
+    labs(title = attr, x = "") +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1, vjust = 0.5)) +
+    theme(plot.margin = unit(c(0.25, 0.25, 0.25, 0.25), "cm"))
+  plots[[i]] <- plot
+  i <- i + 1
+}
+grid.arrange(grobs = plots)
+```
+
+El primer que podem observar és que generalment el crèdit es torna ("No default"), tot i això, el nombre d'impagaments ("Default") és bastant elevat.
+
+També veiem com els motius més habituals a l'hora de demanar un préstec són comprar un cotxe (nou o de segona mà), un televisor o mobles nous.
+
+Es pot veure que la gran majoria de la gent té menys de `100 DM` al seu compte d'estalvis. A més no tenen altres deutors i que acostumen a tenir només un crèdit.
+
+Com és lògic, hi ha poca gent que ha aconseguit un crèdit sense tenir feina. El més comú és haver estat treballant entre 1 i 4 anys. A més, la gent acostuma a ser treballadors amb grans habilitats.
+
+Els homes solters són el perfil que més crèdits demana. Això sembla lògic per què hi ha més homes solters que casats o divorciats. El que sorprén més, és que sent el 50 % de la societat, hi hagi moltes menys dones amb un crèdit.
+
+El més habitual és que les persones visquin en una casa de la seua propietat, a més, molts d'ells porten 4 anys vivint-hi.
+
+Finalment, una variable que ens sorprèn molt és la de `foreign_worker`, aquesta indica que quasi tots els treballadors són estrangers. Això ens indica que, o bé les dades són incorrectes, o aquest banc només ha proporcionat dades de clients estrangers.
+
+També podem generar gràfiques *Box Plot* que ens ajudin a entendre la distribució de les variables numèriques:
+```{r message=FALSE, warning=FALSE}
+boxplot(df$amount)
+```
+```{r message=FALSE, warning=FALSE}
+boxplot(df$age)
+```
+```{r message=FALSE, warning=FALSE}
+boxplot(df$months_loan_duration)
+```
+```{r message=FALSE, warning=FALSE}
+if (!require("dplyr")) {
+  install.packages("dplyr", repos = "http:/cran.us.r-project.org")
+}
+library("dplyr")
+
+remove_attr <- c(
+  "amount",
+  "age",
+  "months_loan_duration",
+  "default"
+)
+df_delete <- select(df, !all_of(remove_attr))
+boxplot(select_if(df_delete, is.numeric))
+```
+
+Les variables numèriques tenen diverses escales, és per això, que no té cap sentit mostrar-les en una sola gràfica.
+
+Veiem que la mediana de l'import del crèdit és de 2.320. La gran majoria d'usuaris en té menys de 3.972, però més de 1.366. I que hi ha alguns casos que n'han demanat més de 10.000, però es poden considerar casos extrems.
+
+Pel que fa a l'edat, veiem que la majoria de persones que han demanat un préstec tenen entre 27 i 42 anys. La mediana de l'edat és de 33 anys. Veiem com hi ha persones que amb més de 60 anys demanen crèdits, però no és gens habitual.
+
+Els crèdits acostumen a durar entre 12 i 24 mesos. La mitjana està en 20 mesos. Però en casos excepcionals, n'hi ha que s'allarguen més de 40 mesos.
+
+Es pot veure com `installment_rate` i `residence_history` tenen una gràfica molt similar, així que és possible que estiguin relacionades. La mediana se situa a 3, però a l'histograma veiem que el més usual és tenir una taxa de fraccionament de 4 i fer 4 anys que es viu a la residència actual.
+
+És estrany veure que el màxim d'anys viscuts en  la mateixa casa sigui de 4, però no tenim forma d'esbrinar si es tracta d'un error. Així que assumirem que les dades són correctes.
+
+Veiem com la gent no acostuma a tenir més de 2 crèdits, de fet, el més normal és tenir-ne només 1.
+
+Pel que fa a la variable `dependents`, aquest tipus de gràfica no ens aporta gaire, ja que, només conté 1 o 2. Però, veiem que la majoria de vegades només una persona és l'obligada a fer el manteniment.
+
+
+### Anàlisi de correlacions
+En aquesta secció volem estudiar la correlació que hi ha entre les diferents variables. 
+
+Per a fer-ho, fem servir una matriu de correlacions. Aquesta ens indica amb un cercle de color blau si hi ha una forta correlació positiva, i amb un cercle de color vermell ens indica si hi ha una correlació negativa. Si el cercle és petit i de color blanc, llavors vol dir que no hi ha cap mena de correlació entre totes dos variables.
+```{r message=FALSE, warning=FALSE}
+if (!require("corrplot")) {
+  install.packages("corrplot", repos = "http:/cran.us.r-project.org")
+}
+library("corrplot")
+
+# visualize correlation matrix
+corrplot(cor(select_if(df, is.numeric)))
+```
+
+Veiem que hi ha una correlació positiva entre la quantitat del crèdit i entre la seua duració. És totalment lògic que sigui així, ja que, com més diners demanes, més es tarda a tornar-los.
+
+Pel que fa a la resta de variables numèriques, no s'observa cap altre tipus de correlació.
+
+
+### Anàlisi gràfica respecte a `default`
+
+Ara volem estudiar la relació de cada una de les variables respecte a la nostra variable objectiu `default`. 
+
+Per això, pintem els histogrames però classificades per l'impagament del crèdit. En aquestes gràfiques "No default" és el color negre i "Default" és el color grana:
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=20}
+grid.newpage()
+plots <- list()
+i <- 1
+
+for (attr in colnames(df)) {
+  if (attr == "default") next
+
+  plot <- ggplot(df, aes_string(x = attr, fill = factor(default))) +
+    geom_histogram(stat = "count") +
+    scale_fill_manual(values = c("#030d0b", "#ae4e38")) +
+    labs(title = attr, x = "") +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1, vjust = 0.5)) +
+    theme(plot.margin = unit(c(0.25, 0.25, 0.25, 0.25), "cm"))
+  plots[[i]] <- plot
+  i <- i + 1
+}
+grid.arrange(grobs = plots)
+```
+
+Es pot observar com el nombre d'impagaments és més alt si el motiu de sol·licitar-lo és comprar-se un cotxe nou.
+
+També veiem com la taxa d'impagaments és superior en aquells que fa menys d'un any que treballen respecte dels que en porten més de set.
+
+Per seguir indagant en aquestes dades, podem generar les gràfiques de les taules de contingència. Aquestes ens mostren el percentatge de *defaults* que hi ha en cada categoria.
+
+Primer hem de crear les taules (s'ha intentat fer tot aquest procés en un *loop*, però no s'ha aconseguit):
+```{r message=FALSE, warning=FALSE}
+table_D1 <- table(df$checking_balance, df$default)
+table_D2 <- table(df$credit_history, df$default)
+table_D3 <- table(df$purpose, df$default)
+table_D4 <- table(df$amount, df$default)
+table_D5 <- table(df$savings_balance, df$default)
+table_D6 <- table(df$employment_length, df$default)
+table_D7 <- table(df$installment_rate, df$default)
+table_D8 <- table(df$personal_status, df$default)
+table_D9 <- table(df$other_debtors, df$default)
+table_D10 <- table(df$residence_history, df$default)
+table_D11 <- table(df$property, df$default)
+table_D12 <- table(df$age, df$default)
+table_D13 <- table(df$installment_plan, df$default)
+table_D14 <- table(df$housing, df$default)
+table_D15 <- table(df$existing_credits, df$default)
+table_D16 <- table(df$dependents, df$default)
+table_D17 <- table(df$telephone, df$default)
+table_D18 <- table(df$foreign_worker, df$default)
+table_D19 <- table(df$job, df$default)
+table_D20 <- table(df$sex, df$default)
+```
+
+Ara mostrem les gràfiques:
+```{r message=FALSE, warning=FALSE, fig.width=12, fig.height=20}
+par(mfrow = c(7, 3))
+
+plot(table_D1, col = c("#030d0b", "#ae4e38"), main = "Checking balance")
+plot(table_D2, col = c("#030d0b", "#ae4e38"), main = "Credit history")
+plot(table_D3, col = c("#030d0b", "#ae4e38"), main = "Purpose")
+plot(table_D4, col = c("#030d0b", "#ae4e38"), main = "Amount")
+plot(table_D5, col = c("#030d0b", "#ae4e38"), main = "Savings Balance")
+plot(table_D6, col = c("#030d0b", "#ae4e38"), main = "Employement Lenght")
+plot(table_D7, col = c("#030d0b", "#ae4e38"), main = "Installment Rate")
+plot(table_D8, col = c("#030d0b", "#ae4e38"), main = "Personal Status")
+plot(table_D9, col = c("#030d0b", "#ae4e38"), main = "Other Debtors")
+plot(table_D10, col = c("#030d0b", "#ae4e38"), main = "Residence History")
+plot(table_D11, col = c("#030d0b", "#ae4e38"), main = "Property")
+plot(table_D12, col = c("#030d0b", "#ae4e38"), main = "Age")
+plot(table_D13, col = c("#030d0b", "#ae4e38"), main = "Installment Plan")
+plot(table_D14, col = c("#030d0b", "#ae4e38"), main = "Housing")
+plot(table_D15, col = c("#030d0b", "#ae4e38"), main = "Existing Credits")
+plot(table_D16, col = c("#030d0b", "#ae4e38"), main = "Dependents")
+plot(table_D17, col = c("#030d0b", "#ae4e38"), main = "Telephone")
+plot(table_D18, col = c("#030d0b", "#ae4e38"), main = "Foreign worker")
+plot(table_D19, col = c("#030d0b", "#ae4e38"), main = "Job")
+plot(table_D20, col = c("#030d0b", "#ae4e38"), main = "Sex")
+```
+
+Podem veure que en general no hi ha gaires diferències entre els valors de les variables. Tot i això, se'n poden destacar algunes.
+
+Els treballadors estrangers tenen un percentatge més alt d'impagaments que els treballadors locals.
+
+Es pot afirmar que conèixer el tipus de propietat on viu la persona és important. Sobretot si viu en un *real state*.
+
+Les persones més grans acostumen a tornar més els crèdits que les persones joves.
+
+Els estalvis i els diners al compte corrent i l'historial de crèdits també demostren grans diferències.
+
+Finalment, basant-nos en l'anàlisi feta fins ara, es pot concloure que les variables que semblen més importants seran:
+
+- `checking_balance`
+- `credit_history`
+- `purpose`
+- `savings_balance`
+- `employement_length`
+- `property`
+- `age`
+- `foreign_worker`
+
+
+## Preparació de les dades
+
+L'objectiu principal d'aquest treball és analitzar les dades utilitzant un arbre de decisió. Per a fer-ho, abans hem de dividir les dades en dos subconjunts. El conjunt d'entrenament i el de prova. El primer ens serveix per a construir el model, i el segon per a comprovar-ne la qualitat.
+
+La quantitat de dades per a cada un dels conjunts pot variar, però s'acostuma a fer servir $2/3$ per al conjunt d'entrenament i $1/3$ per al conjunt de proves.
+
+També hem de separar la variable objectiu de la resta. En el nostre cas, la variable que volem predir és `default`:
+```{r message=FALSE, warning=FALSE}
+packages <- c("dplyr")
+
+not_installed <- packages[!(packages %in% installed.packages())]
+if (length(not_installed) > 0) {
+  install.packages(not_installed, repos = "http:/cran.us.r-project.org")
+}
+lapply(packages, library, character.only = TRUE)
+```
+```{r message=FALSE, warning=FALSE}
+y <- df$default
+
+remove_attr <- c("default")
+X <- select(df, !all_of(remove_attr))
+```
+
+Ara ja podem dividir el *dataset*:
+```{r message=FALSE, warning=FALSE}
+set.seed(1899)
+split_prop <- 3
+
+indexes <- sample(1:nrow(df),
+  size = floor(((split_prop - 1) / split_prop) * nrow(df))
+)
+
+train_X <- X[indexes, ]
+train_y <- y[indexes]
+test_X <- X[-indexes, ]
+test_y <- y[-indexes]
+```
+
+Després d’haver creat els conjunts hem de fer una anàlisi de dades mínim per a assegurar-nos de no obtenir classificadors esbiaixats pels valors que conté cada mostra. En aquest cas, verifiquem que la proporció d'impagaments és més o menys constant en els dos conjunts:
+```{r message=FALSE, warning=FALSE}
+summary(train_X)
+```
+```{r message=FALSE, warning=FALSE}
+summary(train_y)
+```
+```{r message=FALSE, warning=FALSE}
+summary(test_X)
+```
+```{r message=FALSE, warning=FALSE}
+summary(test_y)
+```
+
+Veiem que tots dos conjunts són molt similars, així que podem procedir a crear l'arbre de decisió.
+
+# Creació d'un arbre de decisió
+
+En aquest apartat creem un arbre de decisió Quinlan C5.0. És un tipus d'algoritme de classificació que utilitza un arbre de decisió per prendre decisions basades en diferents atributs. 
+
+És una implementació d'un arbre de decisió que fa servir una tècnica anomenada "poda C4.5" per millorar la precisió de l'algoritme. Això es fa seleccionant els atributs més informatius per fer les decisions en cada node de l'arbre, en lloc de seleccionar atributs aleatòriament.
+
+En primer lloc, carreguem el paquet C50:
+```{r message=FALSE, warning=FALSE}
+packages <- c("C50")
+
+not_installed <- packages[!(packages %in% installed.packages())]
+if (length(not_installed) > 0) {
+  install.packages(not_installed, repos = "http:/cran.us.r-project.org")
+}
+lapply(packages, library, character.only = TRUE)
+```
+
+Ara creem el model utilitzant les dades d'entrenament:
+```{r message=FALSE, warning=FALSE}
+c50_model <- C5.0(train_X, train_y, rules = TRUE)
+summary(c50_model)
+```
+
+Fem servir la funció `summary(...)` perquè ens retorni informació sobre el model que acabem de crear. Mostra la crida que l'ha creat, el nombre de registres i atributs que s'han fet servir, les 15 regles que ha generat i fa una petita avaluació del model amb les dades d'entrenament.
+
+Veiem que s'equivoca en 103 dels 666 casos donats, és a dir, un 15,5 % dels casos. En la matriu es veu com 16 valors reals de "No default" han siguit classificats incorrectament com a "Default" (falsos positius), mentre que en 98 casos de "Default" han sigut incorrectament classificats com a "No default" (falsos negatius). 
+
+És possible que estiguem en un cas d'*overfitting*. Per això, és important avaluar els arbres de decisió fent servir el conjunt de dades de prova i comprovar si l'error que tenim és cert o massa baix.
+
+## Visualització de l'arbre
+Ara podem visualitzar el model. Per a fer-ho, hem de treure l'argument `rules`:
+```{r message=FALSE, warning=FALSE, fig.width=40, fig.height=12}
+c50_model <- C5.0(train_X, train_y)
+plot(c50_model, gp = gpar(fontsize = 9.5))
+```
+
+Com que és un arbre amb moltes regles, es veu una imatge molt petita, però si hi cliquem amb el botó dret del ratolí i l'obrim en una pestanya nova es pot ampliar.
+
+
+# Explicació de les regles obtingudes
+
+En aquest apartat s'hi fa una breu explicació de les regles obtingudes i s'estudia la importància de les variables.
+
+Tenim un total de 15 regles. Cada regla mostrada anteriorment amb la comanda `summary` consisteix en:
+
+- **Un número de regla**: És força arbitrari i només serveix per identificar la regla.
+- **Estadístiques (n/m, lift x)**: Resumeixen el rendiment de la regla. $n$ és el nombre de casos d'entrenament coberts per la regla i $m$, si apareix, mostra quants d'ells no pertanyen a la classe prevista per la regla. L'elevació (*lift*) $x$ és el resultat de dividir la precisió estimada de la regla per la freqüència relativa de la classe prevista en el conjunt d'entrenament.
+- Les condicions que s'han de complir per a que la norma sigui aplicable.
+- La classe predita.
+- Un valor entre 0 i 1 que indica la confiança amb què es fa aquesta predicció.
+
+Les primeres regles fan referència a la variable `foreign_worker`. Amb una confiança del 0.885 ens diu que si el treballador no és estranger, llavors paga el deute. En canvi, també mostra que si el treballador és estranger, amb una confiança de 0.689 també paga el deute. En aquest cas hi hauria un conflicte, així que s'agafaria la que té més confiança.
+
+Hi ha una altra regla que determina amb una confiança de 0.900 que diu que si els diners al compte són inferiors a 200 DM i l'historial de crèdits diu que han sigut `repaid` i la quantitat del crèdit és de més de 7824 i no té altres deutors, llavors hi haurà un impagament.
+
+Hi ha una regla amb molts casos d'entrenament coberts per la regla. Ens diu que si es coneixen els diners que té al compte corrent, llavors es pot afirmar amb una confiança del 0.414 que acabarà en impagament. És la regla amb menys confiança, però és per la que més casos d'entrenament hi passen.
+
+La regla amb més confiança de totes ens diu que si té menys de 200 DM al compte corrent, la durada del crèdit és de més de 24 mesos, l'historial de crèdits diu que han sigut `repaid`, la quantitat d'estalvis està entre 0 i 500 DM, l'`installment_rate` és superior a 2, l'edat és superior a 27 i té feina, però no és autònom, llavors amb una confiança del 0.938 acabarà en impagament.
+
+Com es pot veure, hi ha moltes regles compostes, això es deu a la quantitat de variables del *dataset* i a la poca relació que tenen entre elles.
+
+Les regles compostes de moltes condicions és possible que estiguin fent *overfitting*, ja que, en algunes hi ha condicions que sembla que no tinguin gaire sentit. És un dels problemes de no tenir gaires dades. Amb un conjunt de dades amb més registres és possible que no passi tant.
+
+Una altra mètrica que veiem en la sortida de la funció `summary(..)` és l'ús o importància dels atributs. Tenim una funció anomenada `C5imp(...)` que mostra la importància de cada atribut segons la mètrica escollida.
+
+Quan s'utilitza la mètrica `usage` es calcula la importància a partir del percentatge de mostres del conjunt d'entrenament que acaben a un node terminal després de la divisió. D'aquesta manera, tenim que la primera variable en separar el conjunt té un valor de 100. A partir, d'aquesta, la resta tenen valors més xics.
+```{r message=FALSE, warning=FALSE}
+imp_usage <- C5imp(c50_model, metric = "usage")
+imp_usage
+```
+
+En aquest cas podem veure com l'atribut més important és `foreign_worker` i el segon és `checking_balance`. Hi ha un conjunt de variables que no es fan servir (`purpose`, `property`, `housing`, `existing_credits`, `dependents` i `sex`).
+
+Quan es fa servir la mètrica `splits` la importància es calcula a partir del percentatge de separacions associades a cada variable.
+```{r message=FALSE, warning=FALSE}
+imp_splits <- C5imp(c50_model, metric = "splits")
+imp_splits
+```
+
+Podem veure diferències respecte de l'anterior mètrica, ja que, ara veiem com `checking_balance` és la variable més rellevant, seguida de `credit_history`. Per a trobar `foreign_worker` ens hem de desplaçar fins a la setena posició de la llista.
+
+En la següent gràfica podem veure de forma clara la diferència entre alguns d'aquests atributs:
+```{r message=FALSE, warning=FALSE, fig.width=12}
+row_names <- sort(rownames(imp_usage))
+imp_usage_sort <- imp_usage[order(rownames(imp_usage)), ]
+imp_splits_sort <- imp_splits[order(rownames(imp_splits)), ]
+
+df_imp <- data.frame(
+  attribute = row_names,
+  usage = imp_usage_sort,
+  splits = imp_splits_sort
+)
+str(df_imp)
+
+theme_set(theme_classic())
+
+gg <- ggplot(
+  df_imp,
+  aes(x = splits, xend = usage, y = reorder(attribute, usage), group = 1)
+) +
+  geom_dumbbell(
+    color = "#e3e2e1",
+    colour_x = "#f2911b",
+    colour_xend = "#4973f2",
+    size = 1.5,
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    title = "Gràfica Dumbbell",
+    subtitle = "Diferència entre la importància dels atributs segons <span style='color: #f2911b;'>Splits</span> vs. <span style='color:#4973f2;'>Usage</span>"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top") +
+  theme(plot.subtitle = element_markdown()) +
+  theme(panel.grid.major.x = element_line(size = 0.05))
+plot(gg)
+```
+
+
+# Avaluació amb el conjunt de proves
+
+Com hem comentat anteriorment, cal comprovar que el model funciona correctament utilitzant les dades que encara no ha vist.
+
+Això ho fem predient la variable `default` per a cada un dels registres del conjunt `test_X`. Després obtenim la precisió de l'arbre comprovant les prediccions amb els valors reals `test_y`:
+```{r message=FALSE, warning=FALSE}
+predicted_model <- predict(c50_model, test_X, type = "class")
+precision <- 100 * sum(predicted_model == test_y) / length(predicted_model)
+print(sprintf("La precisió de l'arbre és de: %.4f %%", precision))
+```
+
+Podem fer servir el paquet `gmodels` per a obtenir més informació. Primer de tot, l'instal·lem:
+```{r message=FALSE, warning=FALSE}
+packages <- c("gmodels")
+
+not_installed <- packages[!(packages %in% installed.packages())]
+if (length(not_installed) > 0) {
+  install.packages(not_installed, repos = "http:/cran.us.r-project.org")
+}
+lapply(packages, library, character.only = TRUE)
+```
+
+Ara cridem a la funció `CrossTable(...)` per a que mostri una matriu de confusió:
+```{r message=FALSE, warning=FALSE}
+CrossTable(test_y, predicted_model,
+  prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+  dnn = c("Reality", "Prediction")
+)
+```
+
+Veiem que el model s'equivoca més amb els casos que realment són "Default", un **55,6 %** els classifica com a "No default". En canvi, els casos que realment són "No default" els classifica erròniament un **10,6 %** dels cops.
+
+La **precisió** del model es calcula de la següent forma:
+$$
+Precisió =  \frac{TP}{TP+FP}
+$$
+En aquest cas tenim que $TP$ és igual al nombre de registres que eren "Default" i s'han predit com a "Default". És a dir, 44. I $FP$ és igual al nombre de registres que eren "Default" i s'han predit com a "No default". És a dir, 25:
+$$
+Precisió = \frac{44}{44+25} = 0,637
+$$
+És a dir, quan prediu un impagament, és correcte un **63,7 %** dels cops.
+
+La **sensibilitat** del model es calcula de la següent forma:
+$$
+Sensibilitat = \frac{TP}{TP+FN}
+$$
+En aquest cas tenim que $FN$ és igual al nombre de registres que eren "No default", però s'han predit com a "Default". És a dir, 55:
+$$
+Sensibilitat = \frac{44}{44+55} = 0,444
+$$
+És a dir, identifica correctament el **44,4 %** dels impagaments.
+
+Ara podem calcular també la mesura **F-*measure***, que s'obté amb la següent fórmula:
+$$
+F-Measure = 2 \times \frac{Precisió \times Sensibilitat}{Precisió \times Sensibilitat}
+$$
+Apliquem la fórmula i ens dona: **0,261**. Com que està bastant més a prop del 0 que de l'1 sabem que és un resultat dolent. Aquestà mètrica ens servirà més endavant quan volguem comparar amb nous models.
+
+Gràcies a calcular aquestes mètriques sabem que aquest model no és capaç de determinar quan una persona que demana un crèdit el tornarà o no. A més, quan classifica un impagament no podem estar segurs que ho sigui. En canvi, si li entra una persona que retornarà el crèdit, és capaç d'encertar-ho amb una altra probabilitat.
+
+Evidentment, aquest model no és gens útil per a usar-lo en producció. Un banc que implementi aquesta predicció s'arrisca al fet que no li retornin una gran quantitat de crèdits i, per tant, a perdre molts diners.
+
+
+# Models complementaris
+
+Com s'ha explicat en l'apartat anterior, el model actual no és gens bo. Per la qual cosa, ens veiem obligats a buscar alternatives que el millorin.
+
+En aquest apartat es busca millorar el model canviant alguns paràmetres però mantenint l'algorisme Quinlan C5.0.
+
+També es proven altres tipus d'arbres per a veure com es comparen els models obtinguts.
+
+## Variacions del Quinlan C5.0
+Una forma de millorar el model actual és mitjançant *adaptive boosting*. Bàsicament, consisteix a agregar les prediccions de múltiples predictors per a aconseguir millors prediccions. En aquest cas, es construeixen diversos arbres de decisió i els arbres decideixen quina és la millor classe per a cada registre.
+
+Per afegir aquesta funcionalitat a l'arbre C5.0 només hem d'utilitzar el paràmetre `trials`. Aquest indica el nombre d'arbres diferents que es generen. D'entrada comencem amb 10 `trials`, però es pot anar provant diversos valors:
+```{r message=FALSE, warning=FALSE, fig.width=40, fig.height=12}
+c50_model_10 <- C5.0(train_X, train_y, trials = 10)
+plot(c50_model_10)
+```
+
+Comprovem amb la precisió i **F-*measure*** si hem millorat el model:
+```{r message=FALSE, warning=FALSE}
+calculate_f_measure <- function(model, test_X, test_y) {
+  predicted_model <- predict(model, test_X, type = "class")
+  precision <- 100 * sum(predicted_model == test_y) / length(predicted_model)
+  print(sprintf("La precisió de l'arbre és de: %.4f %%", precision))
+
+  cross_table <- CrossTable(test_y, predicted_model,
+    prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c("Reality", "Prediction")
+  )
+
+  precisio <- cross_table$prop.col[2, 2]
+  sensibilitat <- cross_table$prop.row[2, 2]
+
+  f_measure <- (precisio * sensibilitat) / (precisio + sensibilitat)
+  return(f_measure)
+}
+
+f_measure <- calculate_f_measure(c50_model_10, test_X, test_y)
+print(f_measure)
+```
+
+Veiem com no només no hem millorat, sinó que hem empitjorat. Provem amb altres valors de `trials`:
+```{r message=FALSE, warning=FALSE}
+trials_values <- c(5, 20, 30, 50, 60, 75, 85, 100)
+
+for (trial in trials_values) {
+  model_aux <- C5.0(train_X, train_y, trials = trial)
+  f_measure <- calculate_f_measure(c50_model_10, test_X, test_y)
+  print(paste("Trial:", trial, "F-measure:", f_measure))
+}
+```
+
+Estem obtenint tota l'estona els mateixos resultats. No acabem d'entendre el perquè. Un dels motius podria ser la manca de dades.
+
+
+## Entrenar amb menys atributs
+Una altra possibilitat pel qual no estem assolint bons resultats pot ser que les dades siguin molt complexes i que el model intenti ajustar-s'hi massa.
+
+Podem provar de treure del conjunt d'entrenament els atributs que en anteriors models hem vist que no tenen gaire importància.
+
+Primer de tot, seleccionem els atributs amb més importància:
+```{r message=FALSE, warning=FALSE}
+usage_threshold <- 10
+splits_threshold <- 6
+most_imp <- df_imp$attribute[
+  df_imp$usage > usage_threshold |
+    df_imp$splits > splits_threshold
+]
+test_imp_X <- test_X[most_imp]
+train_imp_X <- train_X[most_imp]
+```
+
+Ara procedim a entrenar el model:
+```{r message=FALSE, warning=FALSE, fig.width=40, fig.height=12}
+c50_model_imp <- C5.0(train_imp_X, train_y)
+plot(c50_model_imp)
+```
+
+Avaluem el model:
+```{r message=FALSE, warning=FALSE}
+f_measure <- calculate_f_measure(c50_model_imp, test_imp_X, test_y)
+print(f_measure)
+```
+
+La F-*measure* és de `r f_measure`, així que tenim uns resultats molt similars als anteriors.
+
+
+## Random Forest
+
+Un altre tipus d'algorisme basat en arbres que es pot provar és ***Random Forest***. Aquest es basa en crear molts arbres de decisió diferents i fer-los servir per a prendre decisions en conjunt.
+
+Primer de tot, carreguem el paquet `randomForest`:
+```{r message=FALSE, warning=FALSE}
+packages <- c("randomForest")
+
+not_installed <- packages[!(packages %in% installed.packages())]
+if (length(not_installed) > 0) {
+  install.packages(not_installed, repos = "http:/cran.us.r-project.org")
+}
+lapply(packages, library, character.only = TRUE)
+```
+
+A continuació, es pot crear el nou model amb la funció `randomForest`:
+```{r message=FALSE, warning=FALSE}
+rf_model <- randomForest(x = train_X, y = train_y, ntree = 10000)
+```
+
+Ara avaluem el model fent servir la funció creada anteriorment: 
+```{r message=FALSE, warning=FALSE}
+f_measure <- calculate_f_measure(rf_model, test_X, test_y)
+print(f_measure)
+```
+
+Tot i que ara tenim una F-*measure* millor (`r f_measure`), no es pot considerar que els resultats hagin millorat gaire. Però, cal destacar que amb aquest model la precisió, és a dir, la probabilitat que s'hagi predit correctament un impagament és més alta. Concretament és del **83,6 %**. Malauradament, la sensibilitat és molt baixa (41,4 %).
+
+
+# Conclusions
+## Interpretació de les variables en les prediccions
+
+En aquesta secció tornem a executar una anàlisi de la influència de les variables, però utilitzant un altre mètode. Ens ha de servir per acabar de conèixer els atributs del conjunt de dades i com es fan servir en els models basats en arbres.
+
+Instal·lem el paquet `iml`, que ens donarà les mètriques interpretabilitat:
+```{r message=FALSE, warning=FALSE}
+packages <- c("iml", "patchwork")
+
+not_installed <- packages[!(packages %in% installed.packages())]
+if (length(not_installed) > 0) {
+  install.packages(not_installed, repos = "http:/cran.us.r-project.org")
+}
+lapply(packages, library, character.only = TRUE)
+```
+
+Primer, creem un nou model amb ***Random Forest***. Podem mesurar la rellevància de cada variable amb la funció `FeatureImp(...)`. La mesura es basa en funcions de pèrdua de rendiment com "ce":
+```{r message=FALSE, warning=FALSE}
+rf <- randomForest(default ~ ., data = df_original, ntree = 50)
+
+X <- df_original[which(names(df_original) != "default")]
+predictor <- Predictor$new(rf, data = df_original, y = "default")
+imp_ce <- FeatureImp$new(predictor, loss = "ce")
+plot(imp_ce)
+```
+
+Segons aquest gràfic, les variables més importants són `checking_balance`, `age` i `amount`. I les menys rellevants són `dependents`, `foreign_worker` i `telephone`.
+
+
+## Conclusions de les dades
+
+Ara que ja hem arribat al final del treball podem concloure que segurament el conjunt de dades no és prou ampli per a fer-ho servir amb models basats en arbres. Estaria bé tenir més registres que aportessin més varietat a les dades.
+
+Com ja s'ha comentat, és curiós el biaix que hi ha respecte als treballadors estrangers. Estaria bé obtenir més registres de treballadors locals per a estudiar si el comportament és diferent.
+
+També seria important tenir dades sobre l'estat familiar de les dones.
+
+Durant el projecte s'ha vist que les variables més importants són `checking_balance`, `age`, `amount`, `credit_history` i `foreign_worker`. Moltes d'elles ja les havíem intuït en l'anàlisi prèvia.
+
+
+## Conclusions dels models
+
+No es pot considerar que cap dels models aconseguits pugui fer-se servir en el món real. 
+
+Els arbres de decisió són molt pràctics per què són capaços de predir variables i alhora és fàcil explicar el seu funcionament. Malgrat tot, en aquest cas no la seua senzillesa no ens ha servit.
+
+És possible que amb un tractament diferent de les dades i amb un estudi més extens dels paràmetres de cada algorisme s'hagin pogut assolir millors resultats. Tot i això, no creiem que la diferència sigui molt elevada.
