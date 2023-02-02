@@ -15,4 +15,4 @@ The used data is [German Credit Data](https://www.kaggle.com/shravan3273/credit-
 
 ## Author
 
-* **Guillem Pla Bertran** - [Linked In](www.linkedin.com/in/guillem-pla)
+* **Guillem Pla Bertran** - [LinkedIn](www.linkedin.com/in/guillem-pla)
